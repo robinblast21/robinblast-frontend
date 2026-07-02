@@ -1,6 +1,7 @@
 // app/play/page.tsx
-// Lobby page — joins the backend room first to get the official roomId,
-// then sends the matching entry fee to the smart contract using that same ID
+// Lobby page — pays entry fee to the contract using the backend's official roomId.
+// If matchmaking takes too long, the player can self-claim their refund
+// directly from the contract instead of waiting on the backend.
 
 "use client";
 
@@ -11,6 +12,7 @@ import { parseEther, keccak256, toBytes } from "viem";
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
 
 const BACKEND_URL = "http://187.77.117.34:3003";
+const CLAIM_UNLOCK_SECONDS = 90; // must match CLAIM_REFUND_DELAY in the contract
 
 export default function PlayPage() {
   const [roomType, setRoomType] = useState<"MICRO" | "STANDARD">("MICRO");
@@ -18,14 +20,15 @@ export default function PlayPage() {
     "idle" | "requesting" | "confirming" | "waiting" | "playing"
   >("idle");
   const [playerCount, setPlayerCount] = useState(0);
+  const [secondsWaiting, setSecondsWaiting] = useState(0);
+  const [claiming, setClaiming] = useState(false);
+
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const lastSocketIdRef = useRef<string | null>(null);
-
-  // These two refs track payment state WITHOUT relying on React state,
-  // so the socket event handlers (set up once) always see the current value
   const awaitingPaymentRef = useRef(false);
   const hasPaidRef = useRef(false);
+  const waitingSinceRef = useRef<number | null>(null);
 
   const { address, isConnected } = useAccount();
   const { writeContractAsync } = useWriteContract();
@@ -66,12 +69,14 @@ export default function PlayPage() {
       roomIdRef.current = data.roomId;
       setPlayerCount(data.players.length);
 
-      // Use the ref, not React state, to check if we're mid-payment-flow
       if (awaitingPaymentRef.current && !hasPaidRef.current) {
         hasPaidRef.current = true;
         awaitingPaymentRef.current = false;
         await payEntryFee(data.roomId);
       } else {
+        if (!waitingSinceRef.current) {
+          waitingSinceRef.current = Date.now();
+        }
         setStatus("waiting");
       }
     });
@@ -85,13 +90,25 @@ export default function PlayPage() {
       roomIdRef.current = null;
       hasPaidRef.current = false;
       awaitingPaymentRef.current = false;
+      waitingSinceRef.current = null;
       alert("Not enough players joined. Your entry fee has been refunded on-chain.");
     });
 
     return () => {
       socket.disconnect();
     };
-  }, []);const payEntryFee = async (roomId: string) => {
+  }, []);
+
+  // Ticks every second while waiting, so we know when the claim button unlocks
+  useEffect(() => {
+    if (status !== "waiting") return;
+    const interval = setInterval(() => {
+      if (waitingSinceRef.current) {
+        setSecondsWaiting(Math.floor((Date.now() - waitingSinceRef.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [status]);const payEntryFee = async (roomId: string) => {
     try {
       setStatus("confirming");
 
@@ -106,6 +123,8 @@ export default function PlayPage() {
         value: feeWei,
       });
 
+      waitingSinceRef.current = Date.now();
+      setSecondsWaiting(0);
       setStatus("waiting");
     } catch (err) {
       console.error("Payment failed:", err);
@@ -125,6 +144,8 @@ export default function PlayPage() {
 
     hasPaidRef.current = false;
     awaitingPaymentRef.current = true;
+    waitingSinceRef.current = null;
+    setSecondsWaiting(0);
     setStatus("requesting");
 
     socketRef.current.emit("join_room", {
@@ -133,7 +154,36 @@ export default function PlayPage() {
     });
   };
 
-  return (
+  const handleClaimRefund = async () => {
+    if (!roomIdRef.current || !address) return;
+
+    try {
+      setClaiming(true);
+      const roomIdBytes32 = keccak256(toBytes(roomIdRef.current));
+
+      await writeContractAsync({
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: "claimRefund",
+        args: [roomIdBytes32],
+      });
+
+      alert("Refund claimed successfully! Check your wallet.");
+      setStatus("idle");
+      roomIdRef.current = null;
+      hasPaidRef.current = false;
+      waitingSinceRef.current = null;
+      setSecondsWaiting(0);
+    } catch (err) {
+      console.error("Claim refund failed:", err);
+      alert("Could not claim refund. It may not be ready yet, or already claimed.");
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const canClaim = status === "waiting" && secondsWaiting >= CLAIM_UNLOCK_SECONDS;
+  const secondsUntilClaim = Math.max(0, CLAIM_UNLOCK_SECONDS - secondsWaiting);return (
     <main className="min-h-screen bg-black pt-14 px-5 pb-10 text-white">
       <div className="max-w-md mx-auto">
         <div className="mb-6 mt-6">
@@ -191,10 +241,23 @@ export default function PlayPage() {
           </div>
         )}
 
-        {status === "waiting" && (
+        {status === "waiting" && !canClaim && (
           <div className="w-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 font-bold py-3 rounded-lg text-center text-sm mb-4">
             Waiting for players... ({playerCount} joined)
+            <div className="text-[10px] text-yellow-400/60 font-normal mt-1">
+              Refund available in {secondsUntilClaim}s if no match
+            </div>
           </div>
+        )}
+
+        {status === "waiting" && canClaim && (
+          <button
+            onClick={handleClaimRefund}
+            disabled={claiming}
+            className="w-full bg-orange-500 text-white font-bold py-3 rounded-lg tracking-widest text-sm mb-4"
+          >
+            {claiming ? "CLAIMING..." : `CLAIM REFUND · ${entryFee} ETH`}
+          </button>
         )}
 
         {status === "playing" && (
@@ -204,7 +267,8 @@ export default function PlayPage() {
         )}
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-xs text-gray-500 text-center">
-          If no other players join within 1 minute, your entry fee is automatically refunded on-chain.
+          If no other players join within 1 minute, your entry fee is automatically refunded.
+          If that fails, you can claim it yourself after 90 seconds.
         </div>
       </div>
     </main>
