@@ -21,6 +21,10 @@ export default function PlayPage() {
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const lastSocketIdRef = useRef<string | null>(null);
+
+  // These two refs track payment state WITHOUT relying on React state,
+  // so the socket event handlers (set up once) always see the current value
+  const awaitingPaymentRef = useRef(false);
   const hasPaidRef = useRef(false);
 
   const { address, isConnected } = useAccount();
@@ -58,19 +62,18 @@ export default function PlayPage() {
       roomIdRef.current = null;
     });
 
-    // This fires right after the backend creates/finds a room —
-    // it's our signal that we now have the OFFICIAL roomId to pay against
     socket.on("room_update", async (data) => {
       roomIdRef.current = data.roomId;
       setPlayerCount(data.players.length);
 
-      // Only pay once, the first time we get a roomId for a fresh join
-      if (!hasPaidRef.current && status === "requesting") {
+      // Use the ref, not React state, to check if we're mid-payment-flow
+      if (awaitingPaymentRef.current && !hasPaidRef.current) {
         hasPaidRef.current = true;
+        awaitingPaymentRef.current = false;
         await payEntryFee(data.roomId);
+      } else {
+        setStatus("waiting");
       }
-
-      setStatus("waiting");
     });
 
     socket.on("game_start", () => {
@@ -81,13 +84,14 @@ export default function PlayPage() {
       setStatus("idle");
       roomIdRef.current = null;
       hasPaidRef.current = false;
+      awaitingPaymentRef.current = false;
       alert("Not enough players joined. Your entry fee has been refunded on-chain.");
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [status]);const payEntryFee = async (roomId: string) => {
+  }, []);const payEntryFee = async (roomId: string) => {
     try {
       setStatus("confirming");
 
@@ -105,14 +109,10 @@ export default function PlayPage() {
       setStatus("waiting");
     } catch (err) {
       console.error("Payment failed:", err);
-      alert("Transaction failed or was rejected. You were not added to the room.");
+      alert("Transaction failed or was rejected. Please try again.");
       setStatus("idle");
       hasPaidRef.current = false;
-
-      // Tell the backend to remove us since payment didn't go through
-      if (socketRef.current && roomIdRef.current) {
-        socketRef.current.emit("leave_room", { roomId: roomIdRef.current });
-      }
+      awaitingPaymentRef.current = false;
     }
   };
 
@@ -124,10 +124,9 @@ export default function PlayPage() {
     if (!socketRef.current) return;
 
     hasPaidRef.current = false;
+    awaitingPaymentRef.current = true;
     setStatus("requesting");
 
-    // Step 1: ask the backend to put us in a room and give us the roomId.
-    // Payment happens afterward, once we receive room_update.
     socketRef.current.emit("join_room", {
       roomType,
       walletAddress: address,
