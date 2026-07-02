@@ -27,19 +27,20 @@ export default function RootLayout({
 function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-black/90 backdrop-blur border-b border-gray-800 h-14 flex items-center justify-between px-5">
-      <div className="flex items-center gap-2">
+      <a href="/" className="flex items-center gap-2">
         <span className="text-xl">💣</span>
         <span className="text-green-400 font-bold tracking-widest text-sm">
           ROBINBLAST
         </span>
-      </div>
+      </a>
       <div className="flex items-center gap-4 text-xs text-gray-400">
         <a href="/play" className="hover:text-white">Play</a>
         <a href="/how-it-works" className="hover:text-white">How It Works</a>
+        <a href="/yield" className="hover:text-white">Yield</a>
         <button className="bg-green-500 text-black px-3 py-1.5 rounded-md font-bold text-xs">
           Connect Wallet
         </button>
       </div>
     </nav>
   );
-}
+}0
