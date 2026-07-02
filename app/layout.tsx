@@ -44,6 +44,14 @@ function Navbar() {
         </span>
         <a href="/how-it-works" className="hover:text-white">How It Works</a>
         <a href="/yield" className="hover:text-white">Yield</a>
+        <a
+          href="https://x.com/robinblastoken"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-white"
+        >
+          𝕏
+        </a>
         <ConnectButton showBalance={false} />
       </div>
     </nav>
