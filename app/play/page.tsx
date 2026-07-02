@@ -1,21 +1,29 @@
 // app/play/page.tsx
-// Lobby page — lets players pick a room type, join a real room,
-// and automatically reconnect if their connection drops
+// Lobby page — sends the entry fee to the smart contract, then joins the room via backend
 
 "use client";
 
 import { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import { useAccount, useWriteContract } from "wagmi";
+import { parseEther, keccak256, toBytes } from "viem";
+import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
 
 const BACKEND_URL = "http://187.77.117.34:3003";
 
 export default function PlayPage() {
   const [roomType, setRoomType] = useState<"MICRO" | "STANDARD">("MICRO");
-  const [status, setStatus] = useState<"idle" | "joining" | "waiting" | "playing">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "confirming" | "joining" | "waiting" | "playing"
+  >("idle");
   const [playerCount, setPlayerCount] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const lastSocketIdRef = useRef<string | null>(null);
+  const pendingRoomIdRef = useRef<string | null>(null);
+
+  const { address, isConnected } = useAccount();
+  const { writeContractAsync } = useWriteContract();
 
   const entryFee = roomType === "MICRO" ? "0.005" : "0.01";
 
@@ -38,53 +46,78 @@ export default function PlayPage() {
     });
 
     socket.on("disconnect", () => {
-      console.log("Disconnected — will try to reconnect");
       lastSocketIdRef.current = socket.id ?? lastSocketIdRef.current;
     });
 
     socket.on("rejoin_success", (data) => {
-      console.log("Rejoined room:", data);
       setStatus(data.status === "playing" ? "playing" : "waiting");
     });
 
-    socket.on("rejoin_failed", (data) => {
-      console.log("Could not rejoin:", data.reason);
+    socket.on("rejoin_failed", () => {
       setStatus("idle");
       roomIdRef.current = null;
     });
 
     socket.on("room_update", (data) => {
-      console.log("Room update:", data);
       roomIdRef.current = data.roomId;
       setPlayerCount(data.players.length);
       setStatus("waiting");
     });
 
-    socket.on("game_start", (data) => {
-      console.log("Game started!", data);
+    socket.on("game_start", () => {
       setStatus("playing");
     });
 
     socket.on("room_refunded", () => {
-      console.log("Room refunded");
       setStatus("idle");
       roomIdRef.current = null;
-      alert("Not enough players joined. Your entry fee would be refunded.");
+      alert("Not enough players joined. Your entry fee has been refunded on-chain.");
     });
 
     return () => {
       socket.disconnect();
     };
-  }, []);
-
-  const handleJoinRoom = () => {
+  }, []);const handleJoinRoom = async () => {
+    if (!isConnected || !address) {
+      alert("Please connect your wallet first.");
+      return;
+    }
     if (!socketRef.current) return;
-    setStatus("joining");
-    socketRef.current.emit("join_room", {
-      roomType,
-      walletAddress: "0xPLACEHOLDER...WALLET",
-    });
-  };return (
+
+    try {
+      setStatus("confirming");
+
+      // Generate a room ID the same way the frontend/backend agree on,
+      // then convert it to bytes32 for the contract call
+      const pendingRoomId = `${roomType}-${Date.now()}`;
+      pendingRoomIdRef.current = pendingRoomId;
+      const roomIdBytes32 = keccak256(toBytes(pendingRoomId));
+      const feeWei = parseEther(entryFee);
+
+      // Send the ETH to the smart contract — this pops up the wallet
+      // confirmation prompt and waits for the user to approve
+      await writeContractAsync({
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: "joinRoom",
+        args: [roomIdBytes32, feeWei],
+        value: feeWei,
+      });
+
+      // Only after the on-chain transaction succeeds do we tell the backend
+      setStatus("joining");
+      socketRef.current.emit("join_room", {
+        roomType,
+        walletAddress: address,
+      });
+    } catch (err) {
+      console.error("Join room failed:", err);
+      alert("Transaction failed or was rejected. Please try again.");
+      setStatus("idle");
+    }
+  };
+
+  return (
     <main className="min-h-screen bg-black pt-14 px-5 pb-10 text-white">
       <div className="max-w-md mx-auto">
         <div className="mb-6 mt-6">
@@ -115,13 +148,25 @@ export default function PlayPage() {
           Waiting time: <span className="text-white font-bold">1 min</span>
         </div>
 
-        {status === "idle" && (
+        {!isConnected && (
+          <div className="w-full bg-zinc-800 text-gray-400 font-bold py-3 rounded-lg text-center text-sm mb-4">
+            Connect your wallet to play
+          </div>
+        )}
+
+        {isConnected && status === "idle" && (
           <button
             onClick={handleJoinRoom}
             className="w-full bg-red-500 text-white font-bold py-3 rounded-lg tracking-widest text-sm mb-4"
           >
             JOIN ROOM · {entryFee} ETH
           </button>
+        )}
+
+        {status === "confirming" && (
+          <div className="w-full bg-zinc-800 text-gray-400 font-bold py-3 rounded-lg text-center text-sm mb-4">
+            Confirm in your wallet...
+          </div>
         )}
 
         {status === "joining" && (
@@ -143,9 +188,9 @@ export default function PlayPage() {
         )}
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-xs text-gray-500 text-center">
-          If no other players join within 1 minute, your entry fee is automatically refunded.
+          If no other players join within 1 minute, your entry fee is automatically refunded on-chain.
         </div>
       </div>
     </main>
   );
-}0
+}
