@@ -39,11 +39,13 @@ function Navbar() {
         </span>
       </a>
       <div className="flex items-center gap-4 text-xs text-gray-400">
-        <a href="/play" className="hover:text-white">Play</a>
+        <span className="text-gray-600 cursor-not-allowed">
+          Play <span className="text-[9px] text-zinc-600">(soon)</span>
+        </span>
         <a href="/how-it-works" className="hover:text-white">How It Works</a>
         <a href="/yield" className="hover:text-white">Yield</a>
         <ConnectButton showBalance={false} />
       </div>
     </nav>
   );
-}0
+}

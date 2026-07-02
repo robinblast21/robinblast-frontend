@@ -1,5 +1,5 @@
 // app/page.tsx
-// The homepage for RobinBlast
+// The homepage for RobinBlast — gameplay locked until $RBLAST launches
 
 export default function Home() {
   return (
@@ -28,13 +28,12 @@ export default function Home() {
         </p>
 
         <div className="flex gap-3 flex-wrap justify-center mb-16">
-          <a
-            href="/play"
-            className="bg-red-500 text-white font-bold px-8 py-3.5 rounded-xl text-sm tracking-widest"
-            style={{ boxShadow: "0 0 24px rgba(239,68,68,0.4)" }}
+          <button
+            disabled
+            className="bg-zinc-800 text-gray-500 font-bold px-8 py-3.5 rounded-xl text-sm tracking-widest cursor-not-allowed"
           >
-            PLAY NOW
-          </a>
+            PLAY · SOON
+          </button>
           <a
             href="/how-it-works"
             className="bg-transparent border border-zinc-800 text-gray-400 font-bold px-8 py-3.5 rounded-xl text-sm tracking-widest"
@@ -86,12 +85,12 @@ export default function Home() {
           </div>
         ))}
 
-        <a
-          href="/play"
-          className="block text-center bg-red-500 text-white font-bold py-3.5 rounded-xl text-sm tracking-widest mt-8"
+        <button
+          disabled
+          className="block w-full text-center bg-zinc-800 text-gray-500 font-bold py-3.5 rounded-xl text-sm tracking-widest mt-8 cursor-not-allowed"
         >
-          START PLAYING
-        </a>
+          PLAY · COMING SOON
+        </button>
       </div>
     </main>
   );
