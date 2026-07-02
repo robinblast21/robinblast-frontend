@@ -1,8 +1,11 @@
 // app/layout.tsx
-// Root layout — wraps every page. Good place for global nav, fonts, and metadata.
+// Root layout — wraps every page with wallet providers and global nav
 
 import type { Metadata } from "next";
 import "./globals.css";
+import "@rainbow-me/rainbowkit/styles.css";
+import { Providers } from "./providers";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 export const metadata: Metadata = {
   title: "RobinBlast — Pass the bomb. Don't get REKT.",
@@ -17,8 +20,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-black text-white">
-        <Navbar />
-        {children}
+        <Providers>
+          <Navbar />
+          {children}
+        </Providers>
       </body>
     </html>
   );
@@ -37,9 +42,7 @@ function Navbar() {
         <a href="/play" className="hover:text-white">Play</a>
         <a href="/how-it-works" className="hover:text-white">How It Works</a>
         <a href="/yield" className="hover:text-white">Yield</a>
-        <button className="bg-green-500 text-black px-3 py-1.5 rounded-md font-bold text-xs">
-          Connect Wallet
-        </button>
+        <ConnectButton showBalance={false} />
       </div>
     </nav>
   );
