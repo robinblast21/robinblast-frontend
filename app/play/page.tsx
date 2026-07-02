@@ -1,5 +1,6 @@
 // app/play/page.tsx
-// Lobby page — sends the entry fee to the smart contract, then joins the room via backend
+// Lobby page — joins the backend room first to get the official roomId,
+// then sends the matching entry fee to the smart contract using that same ID
 
 "use client";
 
@@ -14,13 +15,13 @@ const BACKEND_URL = "http://187.77.117.34:3003";
 export default function PlayPage() {
   const [roomType, setRoomType] = useState<"MICRO" | "STANDARD">("MICRO");
   const [status, setStatus] = useState<
-    "idle" | "confirming" | "joining" | "waiting" | "playing"
+    "idle" | "requesting" | "confirming" | "waiting" | "playing"
   >("idle");
   const [playerCount, setPlayerCount] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const lastSocketIdRef = useRef<string | null>(null);
-  const pendingRoomIdRef = useRef<string | null>(null);
+  const hasPaidRef = useRef(false);
 
   const { address, isConnected } = useAccount();
   const { writeContractAsync } = useWriteContract();
@@ -36,7 +37,6 @@ export default function PlayPage() {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("Connected to backend:", socket.id);
       if (roomIdRef.current && lastSocketIdRef.current) {
         socket.emit("rejoin_room", {
           roomId: roomIdRef.current,
@@ -58,9 +58,18 @@ export default function PlayPage() {
       roomIdRef.current = null;
     });
 
-    socket.on("room_update", (data) => {
+    // This fires right after the backend creates/finds a room —
+    // it's our signal that we now have the OFFICIAL roomId to pay against
+    socket.on("room_update", async (data) => {
       roomIdRef.current = data.roomId;
       setPlayerCount(data.players.length);
+
+      // Only pay once, the first time we get a roomId for a fresh join
+      if (!hasPaidRef.current && status === "requesting") {
+        hasPaidRef.current = true;
+        await payEntryFee(data.roomId);
+      }
+
       setStatus("waiting");
     });
 
@@ -71,31 +80,20 @@ export default function PlayPage() {
     socket.on("room_refunded", () => {
       setStatus("idle");
       roomIdRef.current = null;
+      hasPaidRef.current = false;
       alert("Not enough players joined. Your entry fee has been refunded on-chain.");
     });
 
     return () => {
       socket.disconnect();
     };
-  }, []);const handleJoinRoom = async () => {
-    if (!isConnected || !address) {
-      alert("Please connect your wallet first.");
-      return;
-    }
-    if (!socketRef.current) return;
-
+  }, [status]);const payEntryFee = async (roomId: string) => {
     try {
       setStatus("confirming");
 
-      // Generate a room ID the same way the frontend/backend agree on,
-      // then convert it to bytes32 for the contract call
-      const pendingRoomId = `${roomType}-${Date.now()}`;
-      pendingRoomIdRef.current = pendingRoomId;
-      const roomIdBytes32 = keccak256(toBytes(pendingRoomId));
+      const roomIdBytes32 = keccak256(toBytes(roomId));
       const feeWei = parseEther(entryFee);
 
-      // Send the ETH to the smart contract — this pops up the wallet
-      // confirmation prompt and waits for the user to approve
       await writeContractAsync({
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
@@ -104,17 +102,36 @@ export default function PlayPage() {
         value: feeWei,
       });
 
-      // Only after the on-chain transaction succeeds do we tell the backend
-      setStatus("joining");
-      socketRef.current.emit("join_room", {
-        roomType,
-        walletAddress: address,
-      });
+      setStatus("waiting");
     } catch (err) {
-      console.error("Join room failed:", err);
-      alert("Transaction failed or was rejected. Please try again.");
+      console.error("Payment failed:", err);
+      alert("Transaction failed or was rejected. You were not added to the room.");
       setStatus("idle");
+      hasPaidRef.current = false;
+
+      // Tell the backend to remove us since payment didn't go through
+      if (socketRef.current && roomIdRef.current) {
+        socketRef.current.emit("leave_room", { roomId: roomIdRef.current });
+      }
     }
+  };
+
+  const handleJoinRoom = () => {
+    if (!isConnected || !address) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+    if (!socketRef.current) return;
+
+    hasPaidRef.current = false;
+    setStatus("requesting");
+
+    // Step 1: ask the backend to put us in a room and give us the roomId.
+    // Payment happens afterward, once we receive room_update.
+    socketRef.current.emit("join_room", {
+      roomType,
+      walletAddress: address,
+    });
   };
 
   return (
@@ -163,15 +180,15 @@ export default function PlayPage() {
           </button>
         )}
 
-        {status === "confirming" && (
+        {status === "requesting" && (
           <div className="w-full bg-zinc-800 text-gray-400 font-bold py-3 rounded-lg text-center text-sm mb-4">
-            Confirm in your wallet...
+            Finding a room...
           </div>
         )}
 
-        {status === "joining" && (
+        {status === "confirming" && (
           <div className="w-full bg-zinc-800 text-gray-400 font-bold py-3 rounded-lg text-center text-sm mb-4">
-            Connecting...
+            Confirm in your wallet...
           </div>
         )}
 
