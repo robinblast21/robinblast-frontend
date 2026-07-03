@@ -45,7 +45,7 @@ function Navbar() {
         <a href="/how-it-works" className="hover:text-white">How It Works</a>
         <a href="/yield" className="hover:text-white">Yield</a>
         <a
-          href="https://x.com/robinblastoken"
+          href="https://x.com/RobinBlastToken"
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-white"
